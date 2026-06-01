@@ -1,8 +1,8 @@
-# 💳 eSewa Clone — Production-Grade Payment System
+# 💳 Payment System
 
 ## Overview
 
-This project is a **production-grade backend payment system** inspired by eSewa/Khalti, built with a focus on:
+This project is a **backend payment system** inspired by eSewa/Khalti, built with a focus on:
 
 - Financial correctness
 - Distributed systems design
