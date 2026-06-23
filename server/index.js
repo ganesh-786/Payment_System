@@ -33,7 +33,16 @@ app.get("/users", async (req, res) => {
   res.json(users);
 });
 
-// Start server
-app.listen(process.env.PORT, () => {
-  console.log(`Server running on ${process.env.PORT}`);
+const PORT = process.env.PORT || 3000;
+
+async function main() {
+  await prisma.$connect();
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+main().catch((error) => {
+  console.error("Unable to start server:", error);
+  process.exit(1);
 });
