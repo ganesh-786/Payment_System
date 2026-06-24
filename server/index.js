@@ -6,6 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 dotenv.config();
 
@@ -19,6 +20,27 @@ const app = express();
 app.use(express.json());
 app.use(express.static(clientPath));
 
+// Rate limiter for transfer endpoint (rate limit per user)
+const transferLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // default 1 minute
+  max: parseInt(process.env.RATE_LIMIT_MAX) || 5, // default 5 requests per window
+  keyGenerator: (req) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const token = authHeader.split(" ")[1];
+        const payload = jwt.verify(token, JWT_SECRET);
+        return payload.userId.toString();
+      } catch {
+        // If token verification fails, fall back to IP-based limiting using the library helper for IPv6 safety
+        return ipKeyGenerator(req);
+      }
+    }
+    // No auth header; use IP-based limiting with IPv6 handling
+    return ipKeyGenerator(req);
+  },
+});
+
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
 function signToken(user) {
@@ -27,13 +49,19 @@ function signToken(user) {
   });
 }
 
-function getUserResponse(user) {
+async function getUserResponse(user) {
+  // Fetch wallet balance if exists
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: user.id },
+    select: { balance: true },
+  });
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
     createdAt: user.createdAt,
+    walletBalance: wallet ? wallet.balance : 0,
   };
 }
 
@@ -64,8 +92,17 @@ app.post("/api/auth/signup", async (req, res) => {
       },
     });
 
+    // Create associated wallet with zero balance
+    await prisma.wallet.create({
+      data: {
+        userId: user.id,
+        balance: 0,
+        version: 0,
+      },
+    });
+
     const token = signToken(user);
-    res.json({ token, user: getUserResponse(user) });
+    res.json({ token, user: await getUserResponse(user) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Unable to create account." });
@@ -96,10 +133,97 @@ app.post("/api/auth/signin", async (req, res) => {
     }
 
     const token = signToken(user);
-    res.json({ token, user: getUserResponse(user) });
+    res.json({ token, user: await getUserResponse(user) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Unable to sign in." });
+  }
+});
+
+// Transfer endpoint with optimistic locking and rate limiting
+app.post("/api/transfer", transferLimiter, async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing authorization token." });
+    }
+    const token = authHeader.split(" ")[1];
+    const payload = jwt.verify(token, JWT_SECRET);
+    const fromUserId = payload.userId;
+    const { toUserId, amount, memo } = req.body;
+
+    if (!toUserId || !amount || amount <= 0) {
+      return res.status(400).json({ error: "toUserId and positive amount are required." });
+    }
+    if (toUserId === fromUserId) {
+      return res.status(400).json({ error: "Cannot transfer to self." });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Load sender wallet with version
+      const senderWallet = await tx.wallet.findUnique({
+        where: { userId: fromUserId },
+        select: { id: true, balance: true, version: true },
+      });
+      if (!senderWallet) {
+        throw new Error("Sender wallet not found");
+      }
+      if (senderWallet.balance < amount) {
+        throw new Error("Insufficient funds");
+      }
+      // Load receiver wallet
+      const receiverWallet = await tx.wallet.findUnique({
+        where: { userId: toUserId },
+        select: { id: true, balance: true, version: true },
+      });
+      if (!receiverWallet) {
+        throw new Error("Recipient wallet not found");
+      }
+
+      // Debit sender with optimistic version check
+      const debit = await tx.wallet.updateMany({
+        where: { id: senderWallet.id, version: senderWallet.version },
+        data: { balance: { decrement: amount }, version: { increment: 1 } },
+      });
+      // Credit receiver with version check
+      const credit = await tx.wallet.updateMany({
+        where: { id: receiverWallet.id, version: receiverWallet.version },
+        data: { balance: { increment: amount }, version: { increment: 1 } },
+      });
+
+      if (debit.count !== 1 || credit.count !== 1) {
+        // Optimistic lock conflict
+        throw new Error("Optimistic lock failure");
+      }
+
+      // Create immutable transaction record
+      const transaction = await tx.transaction.create({
+        data: {
+          fromWalletId: senderWallet.id,
+          toWalletId: receiverWallet.id,
+          amount,
+          memo,
+        },
+      });
+      return transaction;
+    });
+    // Success
+    res.json({ transaction: result });
+  } catch (error) {
+    console.error(error);
+    if (error.message === "Insufficient funds") {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.message === "Recipient wallet not found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error.message === "Sender wallet not found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error.message === "Optimistic lock failure") {
+      return res.status(409).json({ error: "Concurrent transfer conflict, please retry." });
+    }
+    return res.status(500).json({ error: "Transfer failed." });
   }
 });
 
