@@ -96,7 +96,7 @@ app.post("/api/auth/signup", async (req, res) => {
     await prisma.wallet.create({
       data: {
         userId: user.id,
-        balance: 0,
+        balance: 1000,
         version: 0,
       },
     });
@@ -150,11 +150,21 @@ app.post("/api/transfer", transferLimiter, async (req, res) => {
     const token = authHeader.split(" ")[1];
     const payload = jwt.verify(token, JWT_SECRET);
     const fromUserId = payload.userId;
-    const { toUserId, amount, memo } = req.body;
+    const { toUserEmail, amount, memo } = req.body;
 
-    if (!toUserId || !amount || amount <= 0) {
-      return res.status(400).json({ error: "toUserId and positive amount are required." });
+    if (!toUserEmail || !amount || amount <= 0) {
+      return res.status(400).json({ error: "toUserEmail and positive amount are required." });
     }
+
+    // Resolve recipient by email
+    const recipientUser = await prisma.user.findUnique({
+      where: { email: toUserEmail },
+    });
+    if (!recipientUser) {
+      return res.status(404).json({ error: "Recipient user not found by email." });
+    }
+    const toUserId = recipientUser.id;
+
     if (toUserId === fromUserId) {
       return res.status(400).json({ error: "Cannot transfer to self." });
     }
@@ -171,13 +181,16 @@ app.post("/api/transfer", transferLimiter, async (req, res) => {
       if (senderWallet.balance < amount) {
         throw new Error("Insufficient funds");
       }
-      // Load receiver wallet
-      const receiverWallet = await tx.wallet.findUnique({
+      // Load receiver wallet (auto‑create if missing for testing)
+      let receiverWallet = await tx.wallet.findUnique({
         where: { userId: toUserId },
         select: { id: true, balance: true, version: true },
       });
       if (!receiverWallet) {
-        throw new Error("Recipient wallet not found");
+        receiverWallet = await tx.wallet.create({
+          data: { userId: toUserId, balance: 1000, version: 0 },
+          select: { id: true, balance: true, version: true },
+        });
       }
 
       // Debit sender with optimistic version check
@@ -249,7 +262,8 @@ app.get("/api/auth/me", async (req, res) => {
       return res.status(401).json({ error: "Invalid token." });
     }
 
-    res.json({ user: getUserResponse(user) });
+    const profile = await getUserResponse(user);
+    res.json({ user: profile });
   } catch (error) {
     console.error(error);
     res.status(401).json({ error: "Authentication failed." });

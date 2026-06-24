@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Transfer from "./Transfer.jsx";
 
 const API_BASE = "/api/auth";
 const tokenKey = "payment_system_token";
@@ -150,6 +151,9 @@ function Profile({ user, onLogout }) {
           <span className="font-semibold">Member since:</span>{" "}
           {new Date(user.createdAt).toLocaleString()}
         </div>
+        <div>
+          <span className="font-semibold">Wallet Balance:</span> {user.walletBalance?.toFixed(2)}
+        </div>
       </div>
     </div>
   );
@@ -159,26 +163,39 @@ function App() {
   const [mode, setMode] = useState("signin");
   const [user, setUser] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem(tokenKey) || null);
 
+  // Load user on mount if token exists
   useEffect(() => {
-    const token = localStorage.getItem(tokenKey);
     if (!token) return;
     fetchMe(token).then((userData) => {
       if (userData) setUser(userData);
     });
-  }, []);
+  }, [token]);
 
   const handleSuccess = (userData) => {
     setUser(userData);
+    const storedToken = localStorage.getItem(tokenKey);
+    setToken(storedToken);
     setStatusMessage("Authentication succeeded.");
   };
 
   const handleLogout = async () => {
-    const token = localStorage.getItem(tokenKey);
-    await authRequest("logout", {}, token);
+    const currentToken = localStorage.getItem(tokenKey);
+    await authRequest("logout", {}, currentToken);
     localStorage.removeItem(tokenKey);
     setUser(null);
+    setToken(null);
     setStatusMessage("You have been logged out.");
+  };
+
+  const handleTransferSuccess = async (transaction) => {
+    // Refresh user data to reflect new wallet balance
+    if (token) {
+      const refreshed = await fetchMe(token);
+      if (refreshed) setUser(refreshed);
+    }
+    setStatusMessage("Transfer completed successfully.");
   };
 
   return (
@@ -216,7 +233,11 @@ function App() {
         {statusMessage && <Message message={statusMessage} type="success" />}
 
         {user ? (
-          <Profile user={user} onLogout={handleLogout} />
+          <>
+            {/* Transfer UI */}
+            <Transfer token={token} onTransferSuccess={handleTransferSuccess} />
+            <Profile user={user} onLogout={handleLogout} />
+          </>
         ) : (
           <AuthForm mode={mode} onSuccess={handleSuccess} />
         )}
