@@ -1,7 +1,14 @@
 export default {
-  content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
+  darkMode: 'class',
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        primary: require('tailwindcss/colors').teal,
+        secondary: require('tailwindcss/colors').slate,
+        alert: require('tailwindcss/colors').rose,
+      },
+    },
   },
   plugins: [],
 };

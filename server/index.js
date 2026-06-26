@@ -25,28 +25,52 @@ const transferLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // default 1 minute
   max: parseInt(process.env.RATE_LIMIT_MAX) || 5, // default 5 requests per window
   keyGenerator: (req) => {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
+    const rawToken = getToken(req);
+    if (rawToken) {
       try {
-        const token = authHeader.split(" ")[1];
-        const payload = jwt.verify(token, JWT_SECRET);
+        const payload = jwt.verify(rawToken, JWT_SECRET);
         return payload.userId.toString();
       } catch {
-        // If token verification fails, fall back to IP-based limiting using the library helper for IPv6 safety
         return ipKeyGenerator(req);
       }
     }
-    // No auth header; use IP-based limiting with IPv6 handling
     return ipKeyGenerator(req);
   },
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
+const IS_PROD = process.env.NODE_ENV === "production";
+
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: IS_PROD,
+  sameSite: "strict",
+  maxAge: 8 * 60 * 60 * 1000,
+  path: "/",
+};
 
 function signToken(user) {
   return jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
     expiresIn: "8h",
   });
+}
+
+function getToken(req) {
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    const cookies = Object.fromEntries(
+      cookieHeader.split(";").map((c) => {
+        const [key, ...val] = c.trim().split("=");
+        return [key, val.join("=")];
+      }),
+    );
+    if (cookies.token) return cookies.token;
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
+  }
+  return null;
 }
 
 async function getUserResponse(user) {
@@ -96,13 +120,14 @@ app.post("/api/auth/signup", async (req, res) => {
     await prisma.wallet.create({
       data: {
         userId: user.id,
-        balance: 0,
+        balance: 1000,
         version: 0,
       },
     });
 
     const token = signToken(user);
-    res.json({ token, user: await getUserResponse(user) });
+    res.cookie("token", token, COOKIE_OPTIONS);
+    res.json({ user: await getUserResponse(user) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Unable to create account." });
@@ -133,7 +158,8 @@ app.post("/api/auth/signin", async (req, res) => {
     }
 
     const token = signToken(user);
-    res.json({ token, user: await getUserResponse(user) });
+    res.cookie("token", token, COOKIE_OPTIONS);
+    res.json({ user: await getUserResponse(user) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Unable to sign in." });
@@ -143,18 +169,27 @@ app.post("/api/auth/signin", async (req, res) => {
 // Transfer endpoint with optimistic locking and rate limiting
 app.post("/api/transfer", transferLimiter, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const rawToken = getToken(req);
+    if (!rawToken) {
       return res.status(401).json({ error: "Missing authorization token." });
     }
-    const token = authHeader.split(" ")[1];
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(rawToken, JWT_SECRET);
     const fromUserId = payload.userId;
-    const { toUserId, amount, memo } = req.body;
+    const { toUserEmail, amount, memo } = req.body;
 
-    if (!toUserId || !amount || amount <= 0) {
-      return res.status(400).json({ error: "toUserId and positive amount are required." });
+    if (!toUserEmail || !amount || amount <= 0) {
+      return res.status(400).json({ error: "toUserEmail and positive amount are required." });
     }
+
+    // Resolve recipient by email
+    const recipientUser = await prisma.user.findUnique({
+      where: { email: toUserEmail },
+    });
+    if (!recipientUser) {
+      return res.status(404).json({ error: "Recipient user not found by email." });
+    }
+    const toUserId = recipientUser.id;
+
     if (toUserId === fromUserId) {
       return res.status(400).json({ error: "Cannot transfer to self." });
     }
@@ -171,13 +206,16 @@ app.post("/api/transfer", transferLimiter, async (req, res) => {
       if (senderWallet.balance < amount) {
         throw new Error("Insufficient funds");
       }
-      // Load receiver wallet
-      const receiverWallet = await tx.wallet.findUnique({
+      // Load receiver wallet (auto‑create if missing for testing)
+      let receiverWallet = await tx.wallet.findUnique({
         where: { userId: toUserId },
         select: { id: true, balance: true, version: true },
       });
       if (!receiverWallet) {
-        throw new Error("Recipient wallet not found");
+        receiverWallet = await tx.wallet.create({
+          data: { userId: toUserId, balance: 1000, version: 0 },
+          select: { id: true, balance: true, version: true },
+        });
       }
 
       // Debit sender with optimistic version check
@@ -228,18 +266,18 @@ app.post("/api/transfer", transferLimiter, async (req, res) => {
 });
 
 app.post("/api/auth/logout", (req, res) => {
+  res.clearCookie("token", { path: "/" });
   return res.json({ success: true });
 });
 
 app.get("/api/auth/me", async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const rawToken = getToken(req);
+    if (!rawToken) {
       return res.status(401).json({ error: "Missing authorization token." });
     }
 
-    const token = authHeader.split(" ")[1];
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(rawToken, JWT_SECRET);
 
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
@@ -249,7 +287,8 @@ app.get("/api/auth/me", async (req, res) => {
       return res.status(401).json({ error: "Invalid token." });
     }
 
-    res.json({ user: getUserResponse(user) });
+    const profile = await getUserResponse(user);
+    res.json({ user: profile });
   } catch (error) {
     console.error(error);
     res.status(401).json({ error: "Authentication failed." });

@@ -1,24 +1,19 @@
 import { useEffect, useState } from "react";
+import Transfer from "./Transfer.jsx";
+import BalancePreview, { formatNpr } from "./BalancePreview.jsx";
 
 const API_BASE = "/api/auth";
-const tokenKey = "payment_system_token";
 
-const fetchMe = async (token) => {
-  if (!token) return null;
-  const response = await fetch(`${API_BASE}/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+const fetchMe = async () => {
+  const response = await fetch(`${API_BASE}/me`);
   if (!response.ok) return null;
   return response.json().then((data) => data.user);
 };
 
-const authRequest = async (path, body, token) => {
+const authRequest = async (path, body) => {
   const response = await fetch(`${API_BASE}/${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   return response.json().then((data) => ({ status: response.status, data }));
@@ -38,11 +33,11 @@ function Input({ label, type, value, onChange }) {
   );
 }
 
-function Button({ children, ...props }) {
+function Button({ children, className, ...props }) {
   return (
     <button
+      className={`mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-primary-600 dark:bg-primary-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 dark:hover:bg-primary-900 disabled:cursor-not-allowed disabled:opacity-50 ${className ?? ""}`}
       {...props}
-      className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {children}
     </button>
@@ -84,7 +79,6 @@ function AuthForm({ mode, onSuccess }) {
       return;
     }
 
-    localStorage.setItem(tokenKey, data.token);
     onSuccess(data.user);
   };
 
@@ -125,31 +119,54 @@ function AuthForm({ mode, onSuccess }) {
 
 function Profile({ user, onLogout }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-lg">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-2xl font-semibold text-slate-900">
-            Welcome back, {user.name}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            You are signed in with {user.email}.
-          </p>
-        </div>
-        <button
-          onClick={onLogout}
-          className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-500"
-        >
-          Logout
-        </button>
+    <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-md h-fit sticky top-8">
+      <button
+        onClick={onLogout}
+        className="mb-6 w-full rounded-2xl bg-rose-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 active:scale-95 duration-150"
+      >
+        Sign out
+      </button>
+
+      <div className="space-y-1 pb-6 border-b border-slate-200">
+        <p className="text-xs font-semibold uppercase tracking-widest text-slate-600">
+          Account Status
+        </p>
+        <p className="text-sm font-medium text-slate-700">Active & Verified</p>
       </div>
-      <div className="mt-6 grid gap-3 rounded-3xl bg-slate-50 p-5 text-sm text-slate-700">
+
+      <div className="mt-6 space-y-4">
         <div>
-          <span className="font-semibold">Role:</span> {user.role}
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-2">
+            Security
+          </p>
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500"></span>
+            <p className="text-sm font-medium text-slate-700">Secured</p>
+          </div>
         </div>
+
         <div>
-          <span className="font-semibold">Member since:</span>{" "}
-          {new Date(user.createdAt).toLocaleString()}
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-2">
+            Account Created
+          </p>
+          <p className="text-sm font-medium text-slate-700">
+            {new Date(user.createdAt).toLocaleDateString("en-US", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
+          </p>
         </div>
+      </div>
+
+      <div className="mt-6 rounded-2xl bg-slate-50 p-4 border border-slate-200">
+        <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+          Need Help?
+        </p>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Contact our support team for any assistance with your account or
+          transactions.
+        </p>
       </div>
     </div>
   );
@@ -159,11 +176,11 @@ function App() {
   const [mode, setMode] = useState("signin");
   const [user, setUser] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
+  const [showTransfer, setShowTransfer] = useState(false);
 
+  // Load user on mount if session cookie exists
   useEffect(() => {
-    const token = localStorage.getItem(tokenKey);
-    if (!token) return;
-    fetchMe(token).then((userData) => {
+    fetchMe().then((userData) => {
       if (userData) setUser(userData);
     });
   }, []);
@@ -174,49 +191,134 @@ function App() {
   };
 
   const handleLogout = async () => {
-    const token = localStorage.getItem(tokenKey);
-    await authRequest("logout", {}, token);
-    localStorage.removeItem(tokenKey);
+    await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
-    setStatusMessage("You have been logged out.");
+    setStatusMessage(null);
+  };
+
+  const handleTransferSuccess = async () => {
+    const refreshed = await fetchMe();
+    if (refreshed) setUser(refreshed);
+    setStatusMessage("Transfer completed successfully.");
   };
 
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
-        <div className="rounded-4xl border border-slate-200 bg-white p-6 shadow-lg sm:p-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.24em] text-slate-500">
-                Payment System
-              </p>
-              <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
-                Sign in or create your account
-              </h1>
-            </div>
-            <div className="flex gap-2 rounded-full bg-slate-100 p-1 shadow-inner">
-              <button
-                type="button"
-                onClick={() => setMode("signin")}
-                className={`rounded-2xl px-4 py-2 text-sm font-semibold ${mode === "signin" ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"}`}
-              >
-                Sign in
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode("signup")}
-                className={`rounded-2xl px-4 py-2 text-sm font-semibold ${mode === "signup" ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"}`}
-              >
-                Sign up
-              </button>
+        {!user && (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-lg sm:p-8">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm uppercase tracking-[0.24em] text-slate-500">
+                  Payment System
+                </p>
+                <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
+                  Sign in or create your account
+                </h1>
+              </div>
+              <div className="flex gap-2 rounded-full bg-slate-100 p-1 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setMode("signin")}
+                  className={`rounded-2xl px-4 py-2 text-sm font-semibold ${mode === "signin" ? "bg-primary-600 dark:bg-primary-800 text-white" : "text-slate-500 hover:text-slate-900"}`}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("signup")}
+                  className={`rounded-2xl px-4 py-2 text-sm font-semibold ${mode === "signup" ? "bg-primary-600 dark:bg-primary-800 text-white" : "text-slate-500 hover:text-slate-900"}`}
+                >
+                  Sign up
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {statusMessage && <Message message={statusMessage} type="success" />}
 
         {user ? (
-          <Profile user={user} onLogout={handleLogout} />
+          <>
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-md">
+                <div className="mb-8 border-b border-slate-200 pb-8">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-2">
+                    Welcome
+                  </p>
+                  <h1 className="text-4xl font-bold text-slate-900 mb-3">
+                    {user.name}
+                  </h1>
+                  <p className="text-base text-slate-600 leading-relaxed max-w-xl">
+                    Manage your wallet securely with instant transactions in
+                    Nepalese Rupees. Your account is protected with
+                    enterprise-grade security.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+                      Email Address
+                    </p>
+                    <p className="text-lg font-semibold text-slate-900 break-all">
+                      {user.email}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+                      Account Type
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary-600"></span>
+                      <p className="text-lg font-semibold text-slate-900 capitalize">
+                        {user.role}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+                      Member Since
+                    </p>
+                    <p className="text-lg font-semibold text-slate-900">
+                      {new Date(user.createdAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                      })}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-gradient-to-br from-primary-50 to-primary-100 p-5 border border-primary-200">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-primary-700 mb-3">
+                      Current Balance
+                    </p>
+                    <p className="text-lg font-bold text-primary-900">
+                      {formatNpr(user.walletBalance)}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  className="mt-4 w-full"
+                  onClick={() => setShowTransfer((prev) => !prev)}
+                >
+                  {showTransfer ? "Hide Transfer" : "Transfer Money"}
+                </Button>
+                {showTransfer && (
+                  <div className="mt-4">
+                    <Transfer onTransferSuccess={handleTransferSuccess} />
+                  </div>
+                )}
+              </div>
+
+              <Profile user={user} onLogout={handleLogout} />
+            </div>
+
+            <BalancePreview user={user} loading={false} />
+          </>
         ) : (
           <AuthForm mode={mode} onSuccess={handleSuccess} />
         )}
