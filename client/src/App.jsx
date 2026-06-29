@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Transfer from "./Transfer.jsx";
 import BalancePreview, { formatNpr } from "./BalancePreview.jsx";
+import Statement from "./Statement.jsx";
 
 const API_BASE = "/api/auth";
 
@@ -177,6 +178,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
   const [showTransfer, setShowTransfer] = useState(false);
+  const [view, setView] = useState("dashboard");
 
   // Load user on mount if session cookie exists
   useEffect(() => {
@@ -240,84 +242,136 @@ function App() {
 
         {user ? (
           <>
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-              <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-md">
-                <div className="mb-8 border-b border-slate-200 pb-8">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-2">
-                    Welcome
-                  </p>
-                  <h1 className="text-4xl font-bold text-slate-900 mb-3">
-                    {user.name}
-                  </h1>
-                  <p className="text-base text-slate-600 leading-relaxed max-w-xl">
-                    Manage your wallet securely with instant transactions in
-                    Nepalese Rupees. Your account is protected with
-                    enterprise-grade security.
-                  </p>
+            {/* Navigation tabs */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-6 shadow-md">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl shadow-inner">
+                  <button
+                    onClick={() => { setView("dashboard"); setShowTransfer(false); }}
+                    className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-150 ${
+                      view === "dashboard"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                      </svg>
+                      Dashboard
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setView("statement")}
+                    className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-150 ${
+                      view === "statement"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                      Statement
+                    </span>
+                  </button>
                 </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-right hidden sm:block">
+                    <p className="text-xs text-slate-400">{user.name}</p>
+                    <p className="text-xs font-semibold text-slate-700">{formatNpr(user.walletBalance)}</p>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 active:scale-95 duration-150"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
-                      Email Address
+            {view === "dashboard" ? (
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-md">
+                  <div className="mb-8 border-b border-slate-200 pb-8">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-2">
+                      Welcome
                     </p>
-                    <p className="text-lg font-semibold text-slate-900 break-all">
-                      {user.email}
+                    <h1 className="text-4xl font-bold text-slate-900 mb-3">
+                      {user.name}
+                    </h1>
+                    <p className="text-base text-slate-600 leading-relaxed max-w-xl">
+                      Manage your wallet securely with instant transactions in
+                      Nepalese Rupees. Your account is protected with
+                      enterprise-grade security.
                     </p>
                   </div>
 
-                  <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
-                      Account Type
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary-600"></span>
-                      <p className="text-lg font-semibold text-slate-900 capitalize">
-                        {user.role}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+                        Email Address
+                      </p>
+                      <p className="text-lg font-semibold text-slate-900 break-all">
+                        {user.email}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+                        Account Type
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary-600"></span>
+                        <p className="text-lg font-semibold text-slate-900 capitalize">
+                          {user.role}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
+                        Member Since
+                      </p>
+                      <p className="text-lg font-semibold text-slate-900">
+                        {new Date(user.createdAt).toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        })}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-gradient-to-br from-primary-50 to-primary-100 p-5 border border-primary-200">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-primary-700 mb-3">
+                        Current Balance
+                      </p>
+                      <p className="text-lg font-bold text-primary-900">
+                        {formatNpr(user.walletBalance)}
                       </p>
                     </div>
                   </div>
 
-                  <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 p-5 border border-slate-200">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-600 mb-3">
-                      Member Since
-                    </p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {new Date(user.createdAt).toLocaleDateString("en-US", {
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      })}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-gradient-to-br from-primary-50 to-primary-100 p-5 border border-primary-200">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-primary-700 mb-3">
-                      Current Balance
-                    </p>
-                    <p className="text-lg font-bold text-primary-900">
-                      {formatNpr(user.walletBalance)}
-                    </p>
-                  </div>
+                  <Button
+                    className="mt-4 w-full"
+                    onClick={() => setShowTransfer((prev) => !prev)}
+                  >
+                    {showTransfer ? "Hide Transfer" : "Transfer Money"}
+                  </Button>
+                  {showTransfer && (
+                    <div className="mt-4">
+                      <Transfer onTransferSuccess={handleTransferSuccess} />
+                    </div>
+                  )}
                 </div>
 
-                <Button
-                  className="mt-4 w-full"
-                  onClick={() => setShowTransfer((prev) => !prev)}
-                >
-                  {showTransfer ? "Hide Transfer" : "Transfer Money"}
-                </Button>
-                {showTransfer && (
-                  <div className="mt-4">
-                    <Transfer onTransferSuccess={handleTransferSuccess} />
-                  </div>
-                )}
+                <Profile user={user} onLogout={handleLogout} />
               </div>
-
-              <Profile user={user} onLogout={handleLogout} />
-            </div>
-
-            <BalancePreview user={user} loading={false} />
+            ) : (
+              <Statement user={user} />
+            )}
           </>
         ) : (
           <AuthForm mode={mode} onSuccess={handleSuccess} />
