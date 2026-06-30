@@ -45,13 +45,53 @@ function Button({ children, className, ...props }) {
   );
 }
 
-function Message({ message, type }) {
-  if (!message) return null;
+function Message({ message, type, onDismiss }) {
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => onDismiss?.(), 5000);
+    return () => clearTimeout(timer);
+  }, [message, onDismiss]);
+
   return (
-    <div
-      className={`rounded-2xl px-4 py-3 text-sm ${type === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}
-    >
-      {message}
+    <div className="min-h-[56px]">
+      <div
+        className={`transition-all duration-300 ease-in-out ${message ? "opacity-100" : "pointer-events-none opacity-0"}`}
+      >
+        {message && (
+          <div
+            className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium shadow-sm ${
+              type === "error"
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+            }`}
+          >
+            <svg className="h-5 w-5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+              {type === "error" ? (
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+                  clipRule="evenodd"
+                />
+              ) : (
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+                  clipRule="evenodd"
+                />
+              )}
+            </svg>
+            <span className="flex-1">{message}</span>
+            <button
+              onClick={onDismiss}
+              className="shrink-0 rounded-lg p-1 transition hover:bg-black/5"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -113,21 +153,14 @@ function AuthForm({ mode, onSuccess }) {
       <Button type="submit" disabled={loading}>
         {loading ? "Processing…" : mode === "signin" ? "Sign in" : "Sign up"}
       </Button>
-      <Message message={message} type={messageType} />
+      <Message message={message} type={messageType} onDismiss={() => setMessage(null)} />
     </form>
   );
 }
 
-function Profile({ user, onLogout }) {
+function Profile({ user }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-md h-fit sticky top-8">
-      <button
-        onClick={onLogout}
-        className="mb-6 w-full rounded-2xl bg-rose-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 active:scale-95 duration-150"
-      >
-        Sign out
-      </button>
-
       <div className="space-y-1 pb-6 border-b border-slate-200">
         <p className="text-xs font-semibold uppercase tracking-widest text-slate-600">
           Account Status
@@ -238,7 +271,7 @@ function App() {
           </div>
         )}
 
-        {statusMessage && <Message message={statusMessage} type="success" />}
+        <Message message={statusMessage} type="success" onDismiss={() => setStatusMessage(null)} />
 
         {user ? (
           <>
@@ -367,7 +400,7 @@ function App() {
                   )}
                 </div>
 
-                <Profile user={user} onLogout={handleLogout} />
+                <Profile user={user} />
               </div>
             ) : (
               <Statement user={user} />
