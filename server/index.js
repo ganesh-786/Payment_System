@@ -295,6 +295,153 @@ app.get("/api/auth/me", async (req, res) => {
   }
 });
 
+// ── Statement / Payment History ──
+
+// Helper to authenticate and get user wallet
+async function authenticateUser(req) {
+  const rawToken = getToken(req);
+  if (!rawToken) return null;
+  const payload = jwt.verify(rawToken, JWT_SECRET);
+  const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+  if (!user) return null;
+  const wallet = await prisma.wallet.findUnique({ where: { userId: user.id } });
+  if (!wallet) return null;
+  return { user, wallet };
+}
+
+// List transactions for the authenticated user (with filters + pagination)
+app.get("/api/transactions", async (req, res) => {
+  try {
+    const auth = await authenticateUser(req);
+    if (!auth) return res.status(401).json({ error: "Missing or invalid authorization token." });
+
+    const walletId = auth.wallet.id;
+    const currentBalance = auth.wallet.balance;
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 20), 100);
+    const type = req.query.type || "all";
+    const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
+    const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
+
+    const where = { OR: [{ fromWalletId: walletId }, { toWalletId: walletId }] };
+
+    if (type === "sent") {
+      where.OR = [{ fromWalletId: walletId }];
+    } else if (type === "received") {
+      where.OR = [{ toWalletId: walletId }];
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = startDate;
+      if (endDate) where.createdAt.lte = endDate;
+    }
+
+    const total = await prisma.transaction.count({ where });
+    const totalPages = Math.ceil(total / limit) || 1;
+    const skip = (page - 1) * limit;
+
+    const transactions = await prisma.transaction.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+      include: {
+        fromWallet: { include: { user: { select: { name: true, email: true } } } },
+        toWallet: { include: { user: { select: { name: true, email: true } } } },
+      },
+    });
+
+    // Compute running balance for each transaction on the page
+    let runningBalance = currentBalance;
+    const balanceMap = {};
+
+    if (transactions.length > 0) {
+      const oldestOnPage = transactions[transactions.length - 1];
+      const newerTxns = await prisma.transaction.findMany({
+        where: {
+          OR: [{ fromWalletId: walletId }, { toWalletId: walletId }],
+          createdAt: { gte: oldestOnPage.createdAt },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, amount: true, fromWalletId: true, toWalletId: true },
+      });
+
+      for (const t of newerTxns) {
+        balanceMap[t.id] = runningBalance;
+        if (t.fromWalletId === walletId) runningBalance += t.amount;
+        else runningBalance -= t.amount;
+      }
+    }
+
+    const enriched = transactions.map((txn) => ({
+      id: txn.id,
+      reference: `TXN${String(txn.id).padStart(8, "0")}`,
+      amount: txn.amount,
+      memo: txn.memo,
+      status: "completed",
+      type: txn.fromWalletId === walletId ? "sent" : "received",
+      sender: { name: txn.fromWallet.user.name, email: txn.fromWallet.user.email },
+      receiver: { name: txn.toWallet.user.name, email: txn.toWallet.user.email },
+      runningBalance: balanceMap[txn.id] ?? null,
+      createdAt: txn.createdAt,
+    }));
+
+    res.json({ transactions: enriched, pagination: { page, limit, total, totalPages } });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch transactions." });
+  }
+});
+
+// Single transaction detail
+app.get("/api/transactions/:id", async (req, res) => {
+  try {
+    const auth = await authenticateUser(req);
+    if (!auth) return res.status(401).json({ error: "Missing or invalid authorization token." });
+
+    const txnId = parseInt(req.params.id);
+    if (isNaN(txnId)) return res.status(400).json({ error: "Invalid transaction ID." });
+
+    const txn = await prisma.transaction.findUnique({
+      where: { id: txnId },
+      include: {
+        fromWallet: { include: { user: { select: { name: true, email: true } } } },
+        toWallet: { include: { user: { select: { name: true, email: true } } } },
+      },
+    });
+
+    if (!txn) return res.status(404).json({ error: "Transaction not found." });
+
+    const walletId = auth.wallet.id;
+    if (txn.fromWalletId !== walletId && txn.toWalletId !== walletId) {
+      return res.status(403).json({ error: "Access denied." });
+    }
+
+    const isSent = txn.fromWalletId === walletId;
+
+    res.json({
+      transaction: {
+        id: txn.id,
+        reference: `TXN${String(txn.id).padStart(8, "0")}`,
+        amount: txn.amount,
+        memo: txn.memo,
+        status: "completed",
+        type: isSent ? "sent" : "received",
+        sender: { name: txn.fromWallet.user.name, email: txn.fromWallet.user.email },
+        receiver: { name: txn.toWallet.user.name, email: txn.toWallet.user.email },
+        createdAt: txn.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch transaction." });
+  }
+});
+
+// ── SPA fallback & error handler ──
+
 app.use((req, res, next) => {
   if (req.method !== "GET" || req.path.startsWith("/api")) {
     return next();
